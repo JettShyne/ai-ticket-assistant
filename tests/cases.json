@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {"id": "D1", "stage": "调试", "text": "我买的东西还没发货，我想退款", "product": "日用品", "order": "", "expect_rule": "R101"},
+    {"id": "D2", "stage": "调试", "text": "快递显示签收了但是我根本没收到", "product": "日用品", "order": "", "expect_rule": "R201"},
+    {"id": "D3", "stage": "调试", "text": "收到的杯子碎了，拍了照片", "product": "日用品", "order": "", "expect_rule": "R301"},
+    {"id": "D4", "stage": "调试", "text": "课程的下单链接打不开了", "product": "虚拟商品", "order": "", "expect_rule": "R401"},
+    {"id": "D5", "stage": "调试", "text": "这个价格昨天买的，今天怎么降价了，能保价吗", "product": "数码产品", "order": "", "expect_rule": "R503"},
+    {"id": "D6", "stage": "调试", "text": "能开一张发票吗，抬头是公司", "product": "日用品", "order": "", "expect_rule": "R501"},
+
+    {"id": "F1", "stage": "终检", "text": "东西少了一件，我要补发", "product": "日用品", "order": "", "expect_rule": "R302"},
+    {"id": "F2", "stage": "终检", "text": "发错货了，我要的是黑色你们发成白色", "product": "服装鞋包", "order": "", "expect_rule": "R303"},
+    {"id": "F3", "stage": "终检", "text": "七天无理由可以退吗", "product": "服装鞋包", "order": "已签收三天", "expect_rule": "R103"},
+    {"id": "F4", "stage": "终检", "text": "你们这是假货，我要投诉，要求赔偿", "product": "数码产品", "order": "", "expect_rule": "R000", "expect_escalate": true},
+    {"id": "F5", "stage": "终检", "text": "你们公司周末上班吗", "product": "未知", "order": "", "expect_rule": "-", "expect_escalate": true},
+    {"id": "F6", "stage": "终检", "text": "课程我已经看完了，现在想退款", "product": "虚拟商品", "order": "已交付并使用", "expect_rule": "R402"}
+  ]
+}
