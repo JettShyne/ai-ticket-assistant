@@ -36,7 +36,8 @@ def main():
     results.append(check("点击分析后无异常", not at.exception, str(at.exception)[:200] if at.exception else ""))
 
     texts = []
-    for element in list(at.markdown) + list(at.success) + list(at.error) + list(at.info) + list(at.code):
+    for element in (list(at.markdown) + list(at.success) + list(at.error) + list(at.info)
+                    + list(at.code) + list(at.caption) + list(at.warning)):
         value = getattr(element, "value", "")
         if value:
             texts.append(str(value))
@@ -44,6 +45,9 @@ def main():
 
     results.append(check("结果里出现规则 R103", "R103" in blob))
     results.append(check("结果里标明判定来源", "判定来源" in blob))
+    results.append(check("六个模块都在", all(
+        title in blob for title in ["问题类型与客户诉求", "已知事实", "信息缺口", "争议点", "处理建议与依据", "不确定性与风险"])))
+    results.append(check("已知事实标了来源", "客户陈述" in blob))
     results.append(check("没有抛错提示", len(at.exception) == 0))
 
     # 3. 空输入时给出提示，而不是崩

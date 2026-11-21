@@ -235,14 +235,20 @@ def _analyze_v1(question, product_type="未知", order_info=""):
             "confidence": "高",
         }
 
+    question_text = question or ""
     scored = []
     for rule in RULES:
         hits = [kw for kw in rule["keywords"] if kw in text]
-        if hits:
-            longest = max(len(kw) for kw in hits)
-            # 商品类型与规则类别一致时加权：虚拟商品的售后规则明显不同于实物
-            boost = 2 if (product_type == "虚拟商品" and rule["group"] == "虚拟商品") else 0
-            scored.append((len(hits) + boost, longest, rule, hits))
+        if not hits:
+            continue
+        # 客户原话里命中的词，权重是辅助字段（商品类型 / 订单情况）的 2 倍。
+        # 否则订单情况里写「已签收」，会把「杯子碎了」判成物流问题（实测踩过）。
+        in_question = [kw for kw in hits if kw in question_text]
+        score = 2 * len(in_question) + (len(hits) - len(in_question))
+        longest = max(len(kw) for kw in hits)
+        # 商品类型与规则类别一致时加权：虚拟商品的售后规则明显不同于实物
+        boost = 2 if (product_type == "虚拟商品" and rule["group"] == "虚拟商品") else 0
+        scored.append((score + boost, longest, rule, hits))
 
     if not scored:
         return {

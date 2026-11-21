@@ -188,3 +188,86 @@ def classify(question, rules, product_type="未知", order_info=""):
         "reason": str(data.get("reason", "")).strip()[:40],
         "tokens": getattr(usage, "total_tokens", 0) if usage else 0,
     }
+
+
+EXTRACT_PROMPT = """你是售后工单的信息抽取器。只抽取，不判断责任，不给处理建议。
+
+任务：从客户原话（可能还有商品类型、订单情况）里抽出三样东西：
+1. 客户到底想要什么（诉求）；
+2. 客户明确说了哪些事实；
+3. 判断这件事还缺哪些信息。
+
+只输出一个 JSON 对象，不要解释文字、不要 Markdown 代码块：
+{
+  "demand": "退款 / 补发 / 换货 / 开票 / 催件 / 要说法 / 未明确 之一",
+  "facts": [{"content": "客户说了什么（不超过 30 字）", "source": "客户陈述"}],
+  "gaps": ["还需要确认什么（每条不超过 12 字）"]
+}
+
+硬性规则：
+- facts 只能来自给到的文字，禁止补充订单号、快递单号、金额、时间、凭证等原文没有的信息。
+- 客户没说的事实不要写；宁可 facts 为空数组。
+- 不做判断：不写"应该退款""商家有责任""客户在撒谎"。
+- facts 最多 4 条，gaps 最多 4 条。"""
+
+
+def extract(question, product_type="未知", order_info=""):
+    """从对话里抽取「诉求 / 已陈述事实 / 信息缺口」。
+
+    Returns:
+        dict 或 None。None 表示不可用或不可信，调用方必须回落，不得编造。
+    """
+    if not available():
+        return None
+    question = (question or "").strip()
+    if not question:
+        return None
+
+    user_parts = ["客户原话：" + question]
+    if product_type and product_type != "未知":
+        user_parts.append("商品类型：" + product_type)
+    if order_info:
+        user_parts.append("订单情况：" + order_info)
+
+    try:
+        resp = _client().chat.completions.create(
+            model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            messages=[
+                {"role": "system", "content": EXTRACT_PROMPT},
+                {"role": "user", "content": "\n".join(user_parts)},
+            ],
+            temperature=0,
+            max_tokens=MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+    except Exception:
+        return None
+
+    content = resp.choices[0].message.content if resp.choices else ""
+    data = _extract_json(content)
+    if not isinstance(data, dict):
+        return None
+
+    facts = []
+    for item in (data.get("facts") or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("content", "")).strip()[:30]
+        if text:
+            facts.append({"content": text, "source": str(item.get("source", "客户陈述"))[:10]})
+
+    gaps = []
+    for item in (data.get("gaps") or [])[:4]:
+        text = str(item).strip()[:12]
+        if text:
+            gaps.append(text)
+
+    demand = str(data.get("demand", "")).strip()[:20]
+
+    usage = getattr(resp, "usage", None)
+    return {
+        "demand": demand,
+        "facts": facts,
+        "gaps": gaps,
+        "tokens": getattr(usage, "total_tokens", 0) if usage else 0,
+    }

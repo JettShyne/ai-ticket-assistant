@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""命令行版 V2：三层识别（规则 → 模型 → 同义词 → 转人工）。
+"""命令行版 V3-1：结构化分析（六个模块）。
 
 用法：
-    python main.py "我买的东西还没发货，想退款"     # 默认 auto：三层都用
-    python main.py --rules "..."                  # 只跑关键词规则（V1 对照实验）
-    python main.py --llm "..."                    # 规则 + 模型，禁用同义词（测模型真实能力）
+    python main.py "东西不满意，能退钱吗"          # 默认：结构化报告
+    python main.py --brief "..."                  # 旧的一页式简版输出
+    python main.py --rules "..."                  # 只跑关键词规则（V1 对照）
+    python main.py --llm "..."                    # 规则 + 模型，禁同义词
     python main.py --check                        # 检查密钥是否配置好（不显示密钥内容）
     python main.py                                # 交互模式，输入 exit 退出
 """
 import os
 import sys
 
+from analysis import build_report, format_report
 from engine import analyze
 
 MODE_FLAGS = {"--rules": "rules", "--llm": "llm", "--auto": "auto"}
@@ -35,17 +37,25 @@ def check_env():
     print("模型调用层：不可用")
     print("原因：没有读到 DEEPSEEK_API_KEY，或者没有安装 openai")
     print("做法：把项目里的 .env.example 复制成 .env，填上你的密钥，然后重跑本条命令")
-    print("提示：没配密钥也能用，只是会自动跳过模型层，靠同义词兜底")
+    print("提示：没配密钥也能用，只是会自动跳过模型层，靠规则与同义词兜底")
     return 1
 
 
-def show(question, product="未知", order="", mode="auto"):
+def show_structured(question, product="未知", order="", mode="auto"):
+    report = build_report(question, product_type=product, order_info=order, mode=mode)
+    print("=" * 66)
+    print("客户问题：" + question)
+    print("=" * 66)
+    print(format_report(report))
+    return report
+
+
+def show_brief(question, product="未知", order="", mode="auto"):
     result = analyze(question, product_type=product, order_info=order, mode=mode)
     print("=" * 60)
     print("客户问题　：" + question)
     print("分类　　　：" + result["category"] + "（规则 " + result["rule_id"] + "）")
     print("判定来源　：" + result["source"] + "（置信度 " + result["confidence"] + "）")
-    print("判断过程　：" + result["reason"])
     print("是否转人工：" + ("是" if result["escalate"] else "否"))
     print("-" * 60)
     print("答复建议　：" + result["advice"])
@@ -53,8 +63,6 @@ def show(question, product="未知", order="", mode="auto"):
         print("规则依据　：" + result["basis"])
     if result["need_info"]:
         print("待确认　　：" + "、".join(result["need_info"]))
-    if result["follow_up"]:
-        print("可先问客户：" + result["follow_up"][0])
     print("=" * 60)
     return result
 
@@ -62,19 +70,30 @@ def show(question, product="未知", order="", mode="auto"):
 def main():
     args = sys.argv[1:]
     mode = "auto"
+    brief = False
 
-    if args and args[0] in MODE_FLAGS:
-        mode = MODE_FLAGS[args[0]]
+    while args and args[0].startswith("--"):
+        flag = args[0]
+        if flag in MODE_FLAGS:
+            mode = MODE_FLAGS[flag]
+        elif flag == "--brief":
+            brief = True
+        elif flag == "--check":
+            return check_env()
+        else:
+            print("不认识的参数：" + flag)
+            return 2
         args = args[1:]
 
-    if args and args[0] == "--check":
-        return check_env()
-
     if args:
-        show(" ".join(args), mode=mode)
+        if brief:
+            show_brief(" ".join(args), mode=mode)
+        else:
+            show_structured(" ".join(args), mode=mode)
         return 0
 
-    print("AI 售后工单辅助台 · 命令行 V2（三模式：auto / llm / 同义词兜底，输入 exit 退出）")
+    print("AI 售后工单辅助台 · 命令行 V3-1（结构化分析，输入 exit 退出）")
+    print("提示：用 --rules 看 V1 原样，用 --brief 看简版输出")
     while True:
         try:
             text = input("\n客户问题> ").strip()
@@ -85,7 +104,10 @@ def main():
             break
         if text == "":
             continue
-        show(text, mode=mode)
+        if brief:
+            show_brief(text, mode=mode)
+        else:
+            show_structured(text, mode=mode)
     return 0
 
 
