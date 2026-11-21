@@ -106,7 +106,9 @@ def facts_not_fabricated(report, question, product, order):
 
 
 def run_case(case):
-    report = build_report(case["question"], case["product"], case["order"])
+    # 确定性用例强制关闭模型抽取：保证结果可复现、不花钱、不依赖当天模型状态。
+    # 模型抽取单独在 fake_client_checks() 里验（要真跑就用 main.py 或 run_badcases.py）。
+    report = build_report(case["question"], case["product"], case["order"], use_llm=False)
     results = []
     label = "{0} {1}".format(case["id"], case["name"])
 
