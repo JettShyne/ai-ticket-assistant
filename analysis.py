@@ -227,6 +227,22 @@ GAP_ALIASES = {
 }
 
 
+# 「XX时间」这类缺口，必须是补充信息里真的出现了时间，才算补齐。
+# 否则「物流显示已签收」会把「签收时间」误判成已补齐（实测踩过）。
+TIME_EVIDENCE_PATTERN = re.compile(
+    r"\d{1,2}\s*[号日]"          # 1号 / 21日
+    r"|\d{1,2}\s*月"             # 11月
+    r"|\d{4}\s*[-/年]\s*\d{1,2}"  # 2026-11 / 2026年11
+    r"|昨天|今天|前天|大前天|上周|本周|上个月|这个月"
+    r"|星期[一二三四五六日天]"
+    r"|\d{1,2}\s*点"             # 下午3点
+)
+
+
+def _time_mentioned(text):
+    return bool(TIME_EVIDENCE_PATTERN.search(text or ""))
+
+
 def _filled_by_supplement(gaps, supplement):
     """补充信息里已经回答了的缺口，就不该再列成「缺」。"""
     if not (supplement or "").strip():
@@ -234,6 +250,10 @@ def _filled_by_supplement(gaps, supplement):
     keep, filled = [], []
     for item in gaps:
         aliases = GAP_ALIASES.get(item, [])
+        # 「XX时间」光有「签收」「收到」不够，必须真给出时间
+        if "时间" in item and not _time_mentioned(supplement):
+            keep.append(item)
+            continue
         if aliases and any(word in supplement for word in aliases):
             filled.append(item)
         else:

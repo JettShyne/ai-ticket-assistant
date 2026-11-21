@@ -233,6 +233,20 @@ def extra_checks(reports):
                          any("没有改变" in item for item in s11["changes"]),
                          " / ".join(s11["changes"])))
 
+    # S12 只说「已签收」、没说时间 → 不许把「签收时间」标成已补齐
+    s12 = build_report("七天无理由可以退吗", "日用品", "", use_llm=False,
+                       supplement="物流显示已签收")
+    results.append(check("S12 · 没有时间信息时不谎称补齐签收时间",
+                         "签收时间" not in (s12["gaps"].get("filled") or []),
+                         "已补齐：" + "、".join(s12["gaps"].get("filled") or [])))
+
+    # S13 真给了时间 → 才允许标成已补齐
+    s13 = build_report("七天无理由可以退吗", "日用品", "", use_llm=False,
+                       supplement="1号签收的")
+    results.append(check("S13 · 真给出时间才标已补齐",
+                         "签收时间" in (s13["gaps"].get("filled") or []),
+                         "已补齐：" + "、".join(s13["gaps"].get("filled") or [])))
+
     return results
 
 
