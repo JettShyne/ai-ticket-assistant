@@ -116,10 +116,16 @@ def main():
     results.append(check("模型分类 → 规则库给依据", ok, result["rule_id"] + " / " + result["source"]))
 
     # 7. 模型失败 → 回落同义词，不空转
+    #    注意：不能用「能不能便宜点」当样本——讲价已定为「转人工」，同义词表里故意没有它
     with_fake_client("随便说点什么")
-    result = analyze("能不能便宜点", mode="auto")
-    ok = result["rule_id"] == "R503" and result["source"] == "同义词"
+    result = analyze("快递一直没动静", mode="auto")
+    ok = result["rule_id"] == "R202" and result["source"] == "同义词"
     results.append(check("模型失败 → 回落同义词", ok, result["rule_id"] + " / " + result["source"]))
+
+    # 7b. 讲价类不应被同义词套成价保，应老实转人工
+    result = analyze("能不能便宜点", mode="auto")
+    ok = result["rule_id"] == "-" and result["escalate"] is True
+    results.append(check("讲价不套价保、老实转人工", ok, result["rule_id"] + " / " + result["category"]))
 
     # 8. rules 模式不受模型与同义词影响
     with_fake_client('{"rule_id": "R103", "escalate": false, "missing": [], "confidence": 0.9, "reason": "x"}')
