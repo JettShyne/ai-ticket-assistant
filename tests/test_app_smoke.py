@@ -57,6 +57,21 @@ def main():
     at2.run()
     results.append(check("空输入不崩、给 warning", (not at2.exception) and len(at2.warning) > 0))
 
+    # 4. 填补充信息后，页面要出现「这次补充改变了什么」
+    at3 = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=60).run()
+    at3.text_area[0].input("东西坏了")
+    at3.text_area[1].input("1号签收的，照片已经发你们客服了")
+    at3.button[0].click()
+    at3.run()
+    texts3 = []
+    for element in list(at3.markdown) + list(at3.success) + list(at3.info) + list(at3.warning):
+        value = getattr(element, "value", "")
+        if value:
+            texts3.append(str(value))
+    blob3 = " ".join(texts3)
+    results.append(check("补充信息不崩", not at3.exception, str(at3.exception)[:150] if at3.exception else ""))
+    results.append(check("页面出现「这次补充改变了什么」", "这次补充改变了什么" in blob3))
+
     total = len(results)
     passed = sum(1 for item in results if item)
     print("-" * 60)

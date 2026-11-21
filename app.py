@@ -72,6 +72,14 @@ with col_b:
     if st.button("清空", use_container_width=True):
         st.rerun()
 
+st.subheader("三、补充信息（客户后来才说的，选填）")
+supplement = st.text_area(
+    "客户补充的内容",
+    placeholder="例如：1号签收的，照片已经发你们客服了 / 物流显示已签收",
+    height=80,
+)
+st.caption("填了就会重新分析一次，并在结果最后告诉你「这次补充改变了什么」。原始对话不会被覆盖。")
+
 # ---------------- 三、结果 ----------------
 if run:
     st.subheader("三、分析结果")
@@ -84,6 +92,7 @@ if run:
             product_type=product_type,
             order_info=order_info,
             mode=mode,
+            supplement=supplement,
         )
         problem = report["problem"]
         advice = report["advice"]
@@ -122,6 +131,8 @@ if run:
             st.info("**可选补充：**" + "、".join(report["gaps"]["optional"]))
         if report["gaps"].get("covered"):
             st.success("**客户已提供：**" + "、".join(report["gaps"]["covered"]) + "（先确认收到，不要再索要）")
+        if report["gaps"].get("filled"):
+            st.success("**本次补充已补齐：**" + "、".join(report["gaps"]["filled"]))
         if not report["gaps"]["must"] and not report["gaps"]["optional"]:
             st.write("规则未要求额外信息。")
         st.caption(report["gaps"]["note"])
@@ -155,6 +166,11 @@ if run:
         if report["follow_up"]:
             st.markdown("### 可先发给客户的澄清话术")
             st.code(report["follow_up"][0], language=None)
+
+        if report.get("changes"):
+            st.markdown("### 七、这次补充改变了什么")
+            for item in report["changes"]:
+                st.markdown("- " + item)
 
         with st.expander("产品边界（为什么它不什么都答）"):
             st.markdown(

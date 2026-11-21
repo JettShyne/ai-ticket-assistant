@@ -196,6 +196,43 @@ def extra_checks(reports):
                          "跳过" in s7["advice"].get("note", ""),
                          s7["advice"].get("note", "")[:40]))
 
+    # ---------------- 第 2 步：补充信息再分析 ----------------
+    # S8 补充信息补齐缺口，且说得出「改变了什么」
+    s8 = build_report("东西坏了", "日用品", "", use_llm=False,
+                      supplement="1号签收的，照片已经发你们客服了")
+    results.append(check("S8 · 补充后缺口减少",
+                         not any("照片" in item or "视频" in item for item in s8["gaps"]["must"]),
+                         "必须核实：" + "、".join(s8["gaps"]["must"])))
+    results.append(check("S8 · 指出这次补充改变了什么", len(s8["changes"]) > 0,
+                         " / ".join(s8["changes"])))
+    results.append(check("S8 · 补充信息记为事实来源",
+                         any("补充信息" in f["source"] for f in s8["known_facts"])))
+    results.append(check("S8 · 原始对话仍然保留",
+                         any(f["content"].startswith("客户原话：") for f in s8["known_facts"])))
+
+    # S9 补充信息与客户说法冲突 → 必须显式呈现
+    s9 = build_report("我没收到货，要退款", "日用品", "", use_llm=False,
+                      supplement="物流显示已签收")
+    results.append(check("S9 · 补充与客户说法冲突时呈现矛盾", len(s9["conflicts"]) > 0))
+    results.append(check("S9 · 冲突写进「改变了什么」",
+                         any("矛盾" in item for item in s9["changes"]),
+                         " / ".join(s9["changes"])))
+
+    # S10 补充信息可以改变分类，并说明变成哪一条
+    s10 = build_report("这个课我不想学了", "虚拟商品", "", use_llm=False,
+                       supplement="下单链接一直打不开")
+    results.append(check("S10 · 补充后分类发生变化", s10["problem"]["rule_id"] == "R401",
+                         s10["problem"]["rule_id"]))
+    results.append(check("S10 · 说明分类是怎么变的",
+                         any("分类从" in item for item in s10["changes"]),
+                         " / ".join(s10["changes"])))
+
+    # S11 补充信息什么都没改变时，也要老实说
+    s11 = build_report("东西坏了", "日用品", "", use_llm=False, supplement="你好")
+    results.append(check("S11 · 补充没改变结论时如实说明",
+                         any("没有改变" in item for item in s11["changes"]),
+                         " / ".join(s11["changes"])))
+
     return results
 
 

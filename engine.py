@@ -184,9 +184,9 @@ RULES = [
 ]
 
 
-def _all_text(question, product_type, order_info):
-    """把客户原话、商品类型、订单情况拼成待匹配文本。"""
-    parts = [question or "", product_type or "", order_info or ""]
+def _all_text(question, product_type, order_info, supplement=""):
+    """把客户原话、商品类型、订单情况、补充信息拼成待匹配文本。"""
+    parts = [question or "", product_type or "", order_info or "", supplement or ""]
     return " ".join(part for part in parts if part).strip()
 
 
@@ -198,17 +198,19 @@ def _escalate_hit(text):
     return None
 
 
-def _analyze_v1(question, product_type="未知", order_info=""):
+def _analyze_v1(question, product_type="未知", order_info="", supplement=""):
     """V1 规则版分析（关键词匹配）。V2 的 analyze 会在这层之上加模型与同义词。
 
     Args:
         question: 客户原话。
         product_type: 商品类型（下拉框选择）。
         order_info: 订单与交付情况描述。
+        supplement: 补充信息（客户后来说的、客服刚问到的）。权重与订单情况相同，
+            都算辅助证据，不会盖过客户原话——否则补一句「已签收」就能把破损判成物流问题。
     Returns:
         dict：category / advice / basis / need_info / escalate / reason / rule_id / confidence
     """
-    text = _all_text(question, product_type, order_info)
+    text = _all_text(question, product_type, order_info, supplement)
 
     if (question or "").strip() == "":
         return {
@@ -366,7 +368,7 @@ def _synonym_match(text):
     return best
 
 
-def _llm_attempt(question, product_type, order_info):
+def _llm_attempt(question, product_type, order_info, supplement=""):
     """调分类层。返回 {"status": ok|unavailable|error, "data": dict|None}。"""
     try:
         import llm_classifier
@@ -376,7 +378,8 @@ def _llm_attempt(question, product_type, order_info):
         return {"status": "unavailable", "data": None}
     try:
         data = llm_classifier.classify(
-            question, RULES, product_type=product_type, order_info=order_info
+            question, RULES, product_type=product_type, order_info=order_info,
+            supplement=supplement,
         )
     except Exception:
         return {"status": "error", "data": None}
@@ -393,7 +396,7 @@ def _decorate(result, source, llm_status, follow_up=None):
     return result
 
 
-def analyze(question, product_type="未知", order_info="", mode="auto"):
+def analyze(question, product_type="未知", order_info="", mode="auto", supplement=""):
     """V2 分析入口：规则 → 模型 → 同义词 → 转人工。
 
     Args:
@@ -403,11 +406,13 @@ def analyze(question, product_type="未知", order_info="", mode="auto"):
         mode: "auto" 默认（规则优先、模型兜底、同义词最后）
               "rules" 只跑 V1 规则（对照实验用）
               "llm" 规则优先、禁同义词（测模型真实能力）
+        supplement: 补充信息（单轮再分析用），权重与订单情况相同。
     Returns:
         dict：rule_id / category / advice / basis / need_info / escalate /
               reason / confidence / source / llm_status / follow_up
     """
-    base = _analyze_v1(question, product_type=product_type, order_info=order_info)
+    base = _analyze_v1(question, product_type=product_type, order_info=order_info,
+                       supplement=supplement)
 
     # 规则层已经有结论（命中规则，或命中转人工关键词，或空输入）→ 直接用
     rule_missed = base["rule_id"] == "-" and base["escalate"] and base["category"] != "输入为空"
@@ -418,7 +423,7 @@ def analyze(question, product_type="未知", order_info="", mode="auto"):
     # ---------------- 第 2 层：模型意图分类 ----------------
     llm_status = "disabled" if mode == "rules" else "skipped"
     if mode in ("auto", "llm"):
-        attempt = _llm_attempt(question, product_type, order_info)
+        attempt = _llm_attempt(question, product_type, order_info, supplement)
         llm_status = attempt["status"]
         data = attempt["data"]
         if llm_status == "ok" and data:
@@ -446,7 +451,7 @@ def analyze(question, product_type="未知", order_info="", mode="auto"):
 
     # ---------------- 第 3 层：同义词兜底（只在默认 auto 模式下启用） ----------------
     if mode == "auto":
-        hit = _synonym_match(_all_text(question, product_type, order_info))
+        hit = _synonym_match(_all_text(question, product_type, order_info, supplement))
         if hit:
             rule = _rule_by_id(hit[0])
             reason = "同义词兜底命中「{0}」→ {1}".format(hit[1], hit[0])

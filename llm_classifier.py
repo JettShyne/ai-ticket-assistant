@@ -122,9 +122,11 @@ def _extract_json(text):
         return None
 
 
-def classify(question, rules, product_type="未知", order_info=""):
+def classify(question, rules, product_type="未知", order_info="", supplement=""):
     """调模型做意图分类。
 
+    Args:
+        supplement: 补充信息（单轮再分析时，客户或客服后来说的内容）。
     Returns:
         dict 或 None。成功时含 rule_id / escalate / missing / confidence / reason / usage。
         None 表示「不可用或不可信」，调用方必须回落。
@@ -140,6 +142,8 @@ def classify(question, rules, product_type="未知", order_info=""):
         user_parts.append("商品类型：" + product_type)
     if order_info:
         user_parts.append("订单情况：" + order_info)
+    if supplement:
+        user_parts.append("补充信息（后来说的，优先参考）：" + supplement)
 
     try:
         resp = _client().chat.completions.create(
@@ -214,7 +218,7 @@ EXTRACT_PROMPT = """你是售后工单的信息抽取器。只抽取，不判断
 - facts 最多 4 条，gaps 最多 4 条。"""
 
 
-def extract(question, product_type="未知", order_info=""):
+def extract(question, product_type="未知", order_info="", supplement=""):
     """从对话里抽取「诉求 / 已陈述事实 / 信息缺口」。
 
     Returns:
@@ -231,6 +235,8 @@ def extract(question, product_type="未知", order_info=""):
         user_parts.append("商品类型：" + product_type)
     if order_info:
         user_parts.append("订单情况：" + order_info)
+    if supplement:
+        user_parts.append("补充信息：" + supplement)
 
     try:
         resp = _client().chat.completions.create(

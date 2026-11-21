@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""命令行版 V3-1：结构化分析（六个模块）。
+"""命令行版 V3-2：结构化分析 + 单轮补充信息再分析。
 
 用法：
-    python main.py "东西不满意，能退钱吗"          # 默认：结构化报告
-    python main.py --brief "..."                  # 旧的一页式简版输出
-    python main.py --rules "..."                  # 只跑关键词规则（V1 对照）
-    python main.py --llm "..."                    # 规则 + 模型，禁同义词
-    python main.py --check                        # 检查密钥是否配置好（不显示密钥内容）
-    python main.py                                # 交互模式，输入 exit 退出
+    python main.py "东西不满意，能退钱吗"                       # 结构化报告
+    python main.py "东西坏了" --补充 "1号签收的，照片已发"        # 补充信息后重新分析
+    python main.py --brief "东西坏了"                           # 简版输出
+    python main.py --rules "东西不满意，能退钱吗"                # 只跑关键词规则（V1 对照）
+    python main.py --llm "..."                                 # 规则 + 模型，禁同义词
+    python main.py --check                                     # 三步体检（库/密钥/真调一次）
+    python main.py --open-env                                  # 打开 .env 填密钥
+    python main.py                                             # 交互模式，输入 exit 退出
 """
 import os
 import shutil
@@ -18,6 +20,7 @@ from analysis import build_report, format_report
 from engine import analyze
 
 MODE_FLAGS = {"--rules": "rules", "--llm": "llm", "--auto": "auto"}
+SUPPLEMENT_FLAGS = ("--补充", "--supplement")
 
 
 def open_env():
@@ -79,8 +82,9 @@ def check_env():
             print("  做法：跑 python main.py --open-env 打开它，")
             print("       把密钥贴在 DEEPSEEK_API_KEY= 后面（不加引号、不留空格），保存后重跑 --check")
         else:
-            print("  原因：项目里没有 .env 文件")
+            print("  原因：项目里没有 .env 文件，也没有设置环境变量")
             print("  做法：跑 python main.py --open-env，会自动复制一份并打开，贴密钥即可")
+            print("       或者在 PowerShell 里：$env:DEEPSEEK_API_KEY=\"sk-...\"（只对当前窗口有效）")
         return 1
     key = llm_classifier.api_key()
     print("  [OK] 读到了密钥（长度 {0}，内容不显示）".format(len(key)))
@@ -99,19 +103,25 @@ def check_env():
     return 1
 
 
-def show_structured(question, product="未知", order="", mode="auto"):
-    report = build_report(question, product_type=product, order_info=order, mode=mode)
+def show_structured(question, product="未知", order="", mode="auto", supplement=""):
+    report = build_report(question, product_type=product, order_info=order,
+                          mode=mode, supplement=supplement)
     print("=" * 66)
     print("客户问题：" + question)
+    if supplement:
+        print("补充信息：" + supplement)
     print("=" * 66)
     print(format_report(report))
     return report
 
 
-def show_brief(question, product="未知", order="", mode="auto"):
-    result = analyze(question, product_type=product, order_info=order, mode=mode)
+def show_brief(question, product="未知", order="", mode="auto", supplement=""):
+    result = analyze(question, product_type=product, order_info=order,
+                     mode=mode, supplement=supplement)
     print("=" * 60)
     print("客户问题　：" + question)
+    if supplement:
+        print("补充信息　：" + supplement)
     print("分类　　　：" + result["category"] + "（规则 " + result["rule_id"] + "）")
     print("判定来源　：" + result["source"] + "（置信度 " + result["confidence"] + "）")
     print("是否转人工：" + ("是" if result["escalate"] else "否"))
@@ -125,35 +135,54 @@ def show_brief(question, product="未知", order="", mode="auto"):
     return result
 
 
-def main():
-    args = sys.argv[1:]
-    mode = "auto"
-    brief = False
-
-    while args and args[0].startswith("--"):
-        flag = args[0]
-        if flag in MODE_FLAGS:
-            mode = MODE_FLAGS[flag]
-        elif flag == "--brief":
+def parse_args(argv):
+    """解析参数；返回 (mode, brief, supplement, rest) 或 None（表示已处理完）。"""
+    mode, brief, supplement = "auto", False, ""
+    rest = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in MODE_FLAGS:
+            mode = MODE_FLAGS[arg]
+        elif arg == "--brief":
             brief = True
-        elif flag == "--check":
-            return check_env()
-        elif flag == "--open-env":
-            return open_env()
+        elif arg == "--check":
+            check_env()
+            return None
+        elif arg == "--open-env":
+            open_env()
+            return None
+        elif arg in SUPPLEMENT_FLAGS:
+            if index + 1 >= len(argv):
+                print("--补充 后面要跟内容。例如：python main.py \"东西坏了\" --补充 \"已签收两天\"")
+                return None
+            supplement = argv[index + 1]
+            index += 1
+        elif arg.startswith("--"):
+            print("不认识的参数：" + arg)
+            return None
         else:
-            print("不认识的参数：" + flag)
-            return 2
-        args = args[1:]
+            rest.append(arg)
+        index += 1
+    return mode, brief, supplement, rest
 
-    if args:
+
+def main():
+    parsed = parse_args(sys.argv[1:])
+    if parsed is None:
+        return 0
+    mode, brief, supplement, rest = parsed
+
+    if rest:
+        question = " ".join(rest)
         if brief:
-            show_brief(" ".join(args), mode=mode)
+            show_brief(question, mode=mode, supplement=supplement)
         else:
-            show_structured(" ".join(args), mode=mode)
+            show_structured(question, mode=mode, supplement=supplement)
         return 0
 
-    print("AI 售后工单辅助台 · 命令行 V3-1（结构化分析，输入 exit 退出）")
-    print("提示：用 --rules 看 V1 原样，用 --brief 看简版输出")
+    print("AI 售后工单辅助台 · 命令行 V3-2（结构化分析 + 补充信息再分析）")
+    print("提示：--brief 简版；--rules 看 V1 原样；--补充 \"内容\" 在问题后面加补充信息")
     while True:
         try:
             text = input("\n客户问题> ").strip()
@@ -165,9 +194,9 @@ def main():
         if text == "":
             continue
         if brief:
-            show_brief(text, mode=mode)
+            show_brief(text, mode=mode, supplement=supplement)
         else:
-            show_structured(text, mode=mode)
+            show_structured(text, mode=mode, supplement=supplement)
     return 0
 
 

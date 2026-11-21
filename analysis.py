@@ -198,10 +198,53 @@ def _information_gaps(rule, order_info):
     return must, optional
 
 
-def _conflicts(question, order_info):
-    """只在两边的说法都真实出现时才报冲突。"""
+# 补充信息 → 缺口匹配表（人工维护的启发式；认不出的缺口不会自动抵消，宁可多问一句）
+GAP_ALIASES = {
+    "订单状态": ["订单", "已发货", "未发货", "已签收", "待发货", "已收货"],
+    "下单时间": ["下单", "拍下", "买的时", "买的日"],
+    "快递单号": ["单号", "运单"],
+    "是否已签收": ["签收", "收到", "拿了"],
+    "签收时间": ["签收", "收到", "几号", "哪天"],
+    "商品是否影响二次销售": ["拆封", "没拆", "完好", "包装", "吊牌"],
+    "收货地址是否准确": ["地址"],
+    "最后更新时间": ["更新", "物流信息", "轨迹"],
+    "是否已确认网点遗失": ["遗失", "丢件", "网点"],
+    "商品照片或开箱视频": ["照片", "视频", "截图", "录屏"],
+    "开箱照片": ["照片", "开箱"],
+    "收到商品的照片": ["照片", "图"],
+    "订单明细": ["明细", "规格", "型号", "下单的"],
+    "是否已收到下载链接/账号": ["链接", "账号", "收到了"],
+    "失败截图": ["截图"],
+    "交付时间": ["交付", "发的时", "什么时候发"],
+    "使用记录": ["看了", "用了", "使用", "学过"],
+    "商品页面截图": ["截图", "页面"],
+    "实际内容截图": ["截图", "内容"],
+    "发票抬头与税号": ["抬头", "税号"],
+    "开票金额": ["金额", "多少钱"],
+    "原发票状态": ["发票"],
+    "正确抬头信息": ["抬头"],
+    "当前活动页面截图": ["截图", "活动"],
+}
+
+
+def _filled_by_supplement(gaps, supplement):
+    """补充信息里已经回答了的缺口，就不该再列成「缺」。"""
+    if not (supplement or "").strip():
+        return list(gaps), []
+    keep, filled = [], []
+    for item in gaps:
+        aliases = GAP_ALIASES.get(item, [])
+        if aliases and any(word in supplement for word in aliases):
+            filled.append(item)
+        else:
+            keep.append(item)
+    return keep, filled
+
+
+def _conflicts(question, order_info, supplement=""):
+    """只在两边的说法都真实出现时才报冲突。补充信息算「订单侧」的证据。"""
     text_client = question or ""
-    text_order = order_info or ""
+    text_order = (order_info or "") + " " + (supplement or "")
 
     found_client = {label for label, words in CLIENT_SIGNALS.items()
                     if any(word in text_client for word in words)}
@@ -255,7 +298,8 @@ def _uncertainty(rule, result, must_gaps, conflicts, demand, covered_evidence=()
     return items
 
 
-def build_report(question, product_type="未知", order_info="", mode="auto", use_llm=True):
+def build_report(question, product_type="未知", order_info="", mode="auto", use_llm=True,
+                 supplement="", _diff=True):
     """生成结构化分析报告。
 
     Args:
@@ -264,11 +308,13 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
         order_info: 订单及交付情况。
         mode: 传给 engine.analyze 的识别模式。
         use_llm: 是否允许模型做「事实与缺口抽取」。
+        supplement: 补充信息（单轮再分析）。给了之后会多输出一节「这次补充改变了什么」。
     Returns:
         dict：problem / known_facts / gaps / conflicts / advice / uncertainty /
-              follow_up / meta
+              follow_up / changes / meta
     """
-    result = analyze(question, product_type=product_type, order_info=order_info, mode=mode)
+    result = analyze(question, product_type=product_type, order_info=order_info,
+                     mode=mode, supplement=supplement)
     rule = None
     for item in RULES:
         if item["id"] == result["rule_id"]:
@@ -277,13 +323,20 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
 
     demand, demand_word = customer_demand(question)
     facts = _known_facts(question, product_type, order_info)
+    if (supplement or "").strip():
+        facts.append({
+            "content": "补充信息：" + supplement.strip(),
+            "source": "补充信息 · 待核实",
+            "verified": False,
+            "note": "后补的内容，仍需与订单后台核对",
+        })
     must_gaps, optional_gaps = _information_gaps(rule, order_info)
-    conflicts = _conflicts(question, order_info)
+    conflicts = _conflicts(question, order_info, supplement)
 
     # 模型抽取（可选）：只补「客户说了什么」，与已有内容重复的一律丢掉
     extraction = None
     if use_llm and mode in ("auto", "llm") and (question or "").strip():
-        extraction = _try_extract(question, product_type, order_info)
+        extraction = _try_extract(question, product_type, order_info, supplement)
         if extraction:
             spoken = " ".join(x for x in [question, order_info, product_type] if x)
             existing_facts = [f["content"] for f in facts]
@@ -325,6 +378,13 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
     optional_gaps, dropped_optional = _drop_covered_gaps(optional_gaps, provided)
     covered = dropped_must + dropped_optional
 
+    # 补充信息回答掉的缺口，也不再算「缺」
+    filled = []
+    if (supplement or "").strip():
+        must_gaps, filled_must = _filled_by_supplement(must_gaps, supplement)
+        optional_gaps, filled_opt = _filled_by_supplement(optional_gaps, supplement)
+        filled = filled_must + filled_opt
+
     # 建议文案是规则库原文，不擅自改写；但客户已给证据时，必须提示客服跳过「索要凭证」这一步
     advice_note = ""
     if covered:
@@ -332,8 +392,15 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
             "客户已提供「{0}」：本条建议里「索要凭证」那一步请跳过，先确认已收到，"
             "再直接进入核实与补发/退款流程。".format("、".join(covered))
         )
+    if filled:
+        extra = "本次补充信息已补齐「{0}」，可以直接进入核实与处理流程。".format("、".join(filled))
+        advice_note = (advice_note + " " + extra).strip() if advice_note else extra
 
     uncertainty = _uncertainty(rule, result, must_gaps, conflicts, demand, covered)
+    if filled:
+        uncertainty.append(
+            "本次补充信息补齐了 {0} 项缺口，结论已据此更新；原始对话仍然保留。".format(len(filled))
+        )
 
     report = {
         "problem": {
@@ -348,6 +415,7 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
             "must": must_gaps,
             "optional": optional_gaps,
             "covered": covered,
+            "filled": filled,
             "note": "「必须核实」不补齐就不能定责；「可选补充」缺了也能给初步建议。",
         },
         "conflicts": conflicts,
@@ -361,16 +429,60 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
         },
         "uncertainty": uncertainty,
         "follow_up": list(result.get("follow_up") or []),
+        "changes": [],
         "meta": {
             "mode": mode,
             "llm_status": result.get("llm_status", "skipped"),
             "llm_extraction": bool(extraction),
+            "has_supplement": bool((supplement or "").strip()),
         },
     }
+
+    # 单轮再分析：和「没有补充信息」时比，到底改变了什么
+    if (supplement or "").strip() and _diff:
+        baseline = build_report(question, product_type=product_type, order_info=order_info,
+                                mode=mode, use_llm=use_llm, supplement="", _diff=False)
+        report["changes"] = _diff_reports(baseline, report)
     return report
 
 
-def _try_extract(question, product_type, order_info):
+def _diff_reports(prev, cur):
+    """对比「补充前 / 补充后」，指出是哪一类信息改变了结论。"""
+    changes = []
+    p, c = prev["problem"], cur["problem"]
+
+    if p["rule_id"] != c["rule_id"] or p["type"] != c["type"]:
+        if p["escalate"] and not c["escalate"]:
+            changes.append("分类从「{0}」变成「{1}」（{2}），现在可以给建议了。".format(
+                p["type"], c["type"], c["rule_id"]))
+        elif c["escalate"] and not p["escalate"]:
+            changes.append("分类从「{0}」变成「{1}」，需要转人工。".format(p["type"], c["type"]))
+        else:
+            changes.append("分类从「{0}」变成「{1}」（{2}）。".format(p["type"], c["type"], c["rule_id"]))
+
+    filled = cur["gaps"].get("filled") or []
+    if filled:
+        changes.append("补齐了缺口：" + "、".join(filled) + "。")
+
+    before_must = len(prev["gaps"]["must"])
+    after_must = len(cur["gaps"]["must"])
+    if after_must < before_must:
+        changes.append("必须核实项从 {0} 项减少到 {1} 项。".format(before_must, after_must))
+    elif after_must > before_must:
+        changes.append("必须核实项从 {0} 项增加到 {1} 项（补充信息带来了新的待核实点）。".format(
+            before_must, after_must))
+
+    prev_notes = [item["note"] for item in prev["conflicts"]]
+    new_conflicts = [item["note"] for item in cur["conflicts"] if item["note"] not in prev_notes]
+    if new_conflicts:
+        changes.append("新增矛盾：" + "；".join(new_conflicts) + "。")
+
+    if not changes:
+        changes.append("这次补充没有改变分类与缺口，只作为事实记录下来，原有结论不变。")
+    return changes
+
+
+def _try_extract(question, product_type, order_info, supplement=""):
     """模型抽取事实与缺口；不可用或失败时返回 None，绝不编造。"""
     try:
         import llm_classifier
@@ -379,7 +491,8 @@ def _try_extract(question, product_type, order_info):
     if not llm_classifier.available():
         return None
     try:
-        return llm_classifier.extract(question, product_type=product_type, order_info=order_info)
+        return llm_classifier.extract(question, product_type=product_type,
+                                      order_info=order_info, supplement=supplement)
     except Exception:
         return None
 
@@ -404,6 +517,8 @@ def format_report(report):
         lines.append("  可选补充：" + "、".join(report["gaps"]["optional"]))
     if report["gaps"].get("covered"):
         lines.append("  客户已提供：" + "、".join(report["gaps"]["covered"]) + "（先确认收到，不要再索要）")
+    if report["gaps"].get("filled"):
+        lines.append("  本次补充已补齐：" + "、".join(report["gaps"]["filled"]))
     if not report["gaps"]["must"] and not report["gaps"]["optional"]:
         lines.append("  暂无需补充（规则未要求额外信息）")
 
@@ -429,4 +544,9 @@ def format_report(report):
 
     if report["follow_up"]:
         lines.append("【可先发给客户】" + report["follow_up"][0])
+
+    if report.get("changes"):
+        lines.append("【七、这次补充改变了什么】")
+        for item in report["changes"]:
+            lines.append("  · " + item)
     return "\n".join(lines)
