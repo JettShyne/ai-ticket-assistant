@@ -182,6 +182,17 @@ def extra_checks(reports):
     results.append(check("S3 · 冲突处理不给任何一方下结论",
                          all("人工" in item["handle"] for item in s3["conflicts"])))
 
+    # 客户已经提供证据时，不许再把它列成「缺」，更不许让客服重复索要
+    s7 = build_report("东西坏了，我拍了照片", "日用品", "", use_llm=False)
+    must = s7["gaps"]["must"]
+    results.append(check("S7 · 客户已拍照则不再索要照片",
+                         not any("照片" in item or "视频" in item for item in must),
+                         "必须核实：" + "、".join(must)))
+    results.append(check("S7 · 已提供的证据被单独标出", bool(s7["gaps"].get("covered")),
+                         "、".join(s7["gaps"].get("covered", []))))
+    results.append(check("S7 · 不确定性提醒先确认证据",
+                         any("已表示提供" in item for item in s7["uncertainty"])))
+
     return results
 
 

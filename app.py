@@ -120,6 +120,8 @@ if run:
             st.error("**必须核实：**" + "、".join(report["gaps"]["must"]))
         if report["gaps"]["optional"]:
             st.info("**可选补充：**" + "、".join(report["gaps"]["optional"]))
+        if report["gaps"].get("covered"):
+            st.success("**客户已提供：**" + "、".join(report["gaps"]["covered"]) + "（先确认收到，不要再索要）")
         if not report["gaps"]["must"] and not report["gaps"]["optional"]:
             st.write("规则未要求额外信息。")
         st.caption(report["gaps"]["note"])

@@ -59,6 +59,43 @@ CONFLICT_RULES = [
 # 缺信息时判断「必须 vs 可选」的关键词：涉及订单、时间、凭证的算必须
 MUST_VERIFY_HINTS = ["单号", "时间", "状态", "凭证", "照片", "截图", "是否", "金额", "抬头"]
 
+# 客户自己说已经提供过的证据：命中后，对应缺口就不再算「缺」
+EVIDENCE_SIGNALS = {
+    "照片/视频": ["照片", "拍照", "拍了", "截图", "视频", "录屏"],
+    "快递单号": ["单号", "快递单", "运单号"],
+}
+# 缺口项里出现这些词，说明这条缺口要的是证据
+EVIDENCE_GAP_HINTS = {
+    "照片/视频": ["照片", "截图", "视频", "开箱"],
+    "快递单号": ["单号"],
+}
+
+
+def _provided_evidence(facts):
+    """从已知事实（不含「未提供」项）里找出客户已经给出的证据类型。"""
+    provided = set()
+    text = " ".join(f["content"] for f in facts if f["source"] != "缺失")
+    for kind, words in EVIDENCE_SIGNALS.items():
+        if any(word in text for word in words):
+            provided.add(kind)
+    return provided
+
+
+def _drop_covered_gaps(gaps, provided):
+    """客户已经给出的证据，不再列成缺口。"""
+    keep, removed = [], []
+    for item in gaps:
+        covered = False
+        for kind, words in EVIDENCE_GAP_HINTS.items():
+            if kind in provided and any(word in item for word in words):
+                covered = True
+                break
+        if covered:
+            removed.append(item)
+        else:
+            keep.append(item)
+    return keep, removed
+
 # 去重时忽略这三种后缀：「订单信息 / 订单情况 / 订单状态」在这个语境下是一回事
 _NORMALIZE_SUFFIXES = ("信息", "情况", "状态", "内容")
 
@@ -183,7 +220,7 @@ def _conflicts(question, order_info):
     return conflicts
 
 
-def _uncertainty(rule, result, must_gaps, conflicts, demand):
+def _uncertainty(rule, result, must_gaps, conflicts, demand, covered_evidence=()):
     items = []
 
     if rule is None:
@@ -199,6 +236,12 @@ def _uncertainty(rule, result, must_gaps, conflicts, demand):
 
     for conflict in conflicts:
         items.append("存在矛盾：" + conflict["note"] + "。")
+
+    if covered_evidence:
+        items.append(
+            "客户已表示提供「{0}」，答复前先确认是否真的收到，不要再重复索要。".format(
+                "、".join(covered_evidence))
+        )
 
     if demand == "未明确":
         items.append("客户诉求不明确，建议先问清他要的是退款、补发还是解释。")
@@ -276,7 +319,13 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
             if extraction.get("demand") and demand == "未明确":
                 demand = str(extraction["demand"]).strip()[:20]
 
-    uncertainty = _uncertainty(rule, result, must_gaps, conflicts, demand)
+    # 客户自己已经给出的证据，不再算「缺」——否则会出现「客户已拍照，却让客服再要照片」
+    provided = _provided_evidence(facts)
+    must_gaps, dropped_must = _drop_covered_gaps(must_gaps, provided)
+    optional_gaps, dropped_optional = _drop_covered_gaps(optional_gaps, provided)
+    covered = dropped_must + dropped_optional
+
+    uncertainty = _uncertainty(rule, result, must_gaps, conflicts, demand, covered)
 
     report = {
         "problem": {
@@ -290,6 +339,7 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
         "gaps": {
             "must": must_gaps,
             "optional": optional_gaps,
+            "covered": covered,
             "note": "「必须核实」不补齐就不能定责；「可选补充」缺了也能给初步建议。",
         },
         "conflicts": conflicts,
@@ -343,6 +393,8 @@ def format_report(report):
         lines.append("  必须核实：" + "、".join(report["gaps"]["must"]))
     if report["gaps"]["optional"]:
         lines.append("  可选补充：" + "、".join(report["gaps"]["optional"]))
+    if report["gaps"].get("covered"):
+        lines.append("  客户已提供：" + "、".join(report["gaps"]["covered"]) + "（先确认收到，不要再索要）")
     if not report["gaps"]["must"] and not report["gaps"]["optional"]:
         lines.append("  暂无需补充（规则未要求额外信息）")
 
