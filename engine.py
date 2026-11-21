@@ -198,8 +198,8 @@ def _escalate_hit(text):
     return None
 
 
-def analyze(question, product_type="未知", order_info=""):
-    """分析一条售后问题。
+def _analyze_v1(question, product_type="未知", order_info=""):
+    """V1 规则版分析（关键词匹配）。V2 的 analyze 会在这层之上加模型与同义词。
 
     Args:
         question: 客户原话。
@@ -271,3 +271,186 @@ def analyze(question, product_type="未知", order_info=""):
         "reason": "命中 " + best["id"] + "（" + "、".join(hits) + "）",
         "confidence": confidence,
     }
+
+
+# ===========================================================================
+# V2 分层识别（2026-11-21 加入）
+#
+#   第 1 层  关键词规则     _analyze_v1()，V1 行为完全不变，保证 12/12 不回退
+#   第 2 层  模型意图分类   只在第 1 层没命中时调用；模型只给规则 ID，不写答复
+#   第 3 层  同义词兜底     没有 key / 模型失败时才用；人工维护，天花板低
+#   第 4 层  转人工        附带一句客服可直接发出的澄清话术
+#
+# 为什么模型放在关键词之后：关键词命中的问题本来就能答对，没必要花 token；
+# 关键词答不出的（换说法）才是真问题，也正是模型擅长的地方。
+# ===========================================================================
+
+# 同义词兜底表：按「意图」整理的口语说法，不是照着测试句写的。
+# 注意：这张表会包含一些测试用例里的说法，所以它命中 6/6 只能说明「按意图整理有效」，
+#      不能证明泛化能力——泛化必须用真实客服用语验证。
+SYNONYMS = {
+    # 一、退货退款
+    "R101": ["还没发", "一直没发", "不发货", "不买了", "取消掉"],
+    "R102": ["已经寄出", "在路上", "不想收了", "别送了", "送回去"],
+    "R103": ["不满意", "能退钱", "不合适", "买错了", "不想要这个"],
+    # 二、物流异常
+    "R201": ["没拿到", "没看见", "放哪了", "显示签收"],
+    "R202": ["没动静", "一动不动", "停在半路", "物流停", "好几天没动"],
+    "R203": ["丢件", "弄丢了", "包裹没了", "找不到包裹"],
+    # 三、商品质量与发错
+    "R301": ["有问题", "没声音", "用不了", "故障", "质量问题", "坏的"],
+    "R302": ["少了一件", "数量不对", "少了东西", "没给齐"],
+    "R303": ["发错了", "不是我买的", "拿错", "给错"],
+    # 四、虚拟商品
+    "R401": ["打不开", "链接失效", "没发给我", "网盘链接", "下不了"],
+    "R402": ["不想学了", "已经看了", "学过一半", "听过了", "已经打开过"],
+    "R403": ["跟描述不一样", "和页面不符", "不是宣传的样子"],
+    # 五、发票与其他
+    "R501": ["要发票", "开张发票", "报销"],
+    "R502": ["发票改了", "抬头写错", "发票信息错"],
+    "R503": ["便宜点", "能少点", "有优惠吗", "打折", "降了"],
+}
+
+# 规则未覆盖时给客服的澄清话术，把一次无效的「转人工」变成一次有效澄清
+FOLLOW_UP_QUESTION = "想先确认一下：这是商品问题、物流问题，还是退款 / 发票问题？"
+
+# 模型判定为「必须人工」时的统一答复（与 R000 口径一致）
+ESCALATE_RESULT = {
+    "rule_id": "R000",
+    "category": "转人工 · 争议与授权",
+    "advice": "此问题涉及赔付、投诉或例外承诺，AI 不给出结论性答复，请转交人工主管处理。",
+    "basis": "R000-1 涉及赔偿与例外承诺必须人工授权；R000-2 投诉升级类问题不得由 AI 直接回复。",
+    "need_info": [],
+    "escalate": True,
+    "confidence": "高",
+}
+
+
+def _rule_by_id(rule_id):
+    for rule in RULES:
+        if rule["id"] == rule_id:
+            return rule
+    return None
+
+
+def _result_from_rule(rule, reason, confidence="中", need_info=None):
+    if need_info is None:
+        need_info = rule["need_info"]
+    return {
+        "rule_id": rule["id"],
+        "category": rule["category"],
+        "advice": rule["advice"],
+        "basis": rule["basis"],
+        "need_info": list(need_info),
+        "escalate": bool(rule["escalate"]),
+        "reason": reason,
+        "confidence": confidence,
+    }
+
+
+def _synonym_match(text):
+    """同义词兜底：取命中的最长短语；同长度时按规则顺序。"""
+    best = None
+    for rule_id, phrases in SYNONYMS.items():
+        for phrase in phrases:
+            if phrase in text and (best is None or len(phrase) > len(best[1])):
+                best = (rule_id, phrase)
+    return best
+
+
+def _llm_attempt(question, product_type, order_info):
+    """调分类层。返回 {"status": ok|unavailable|error, "data": dict|None}。"""
+    try:
+        import llm_classifier
+    except Exception:
+        return {"status": "unavailable", "data": None}
+    if not llm_classifier.available():
+        return {"status": "unavailable", "data": None}
+    try:
+        data = llm_classifier.classify(
+            question, RULES, product_type=product_type, order_info=order_info
+        )
+    except Exception:
+        return {"status": "error", "data": None}
+    if not data:
+        return {"status": "error", "data": None}
+    return {"status": "ok", "data": data}
+
+
+def _decorate(result, source, llm_status, follow_up=None):
+    result = dict(result)
+    result["source"] = source
+    result["llm_status"] = llm_status
+    result["follow_up"] = list(follow_up or [])
+    return result
+
+
+def analyze(question, product_type="未知", order_info="", mode="auto"):
+    """V2 分析入口：规则 → 模型 → 同义词 → 转人工。
+
+    Args:
+        question: 客户原话。
+        product_type: 商品类型。
+        order_info: 订单与交付情况。
+        mode: "auto" 默认（规则优先、模型兜底、同义词最后）
+              "rules" 只跑 V1 规则（对照实验用）
+              "llm" 规则优先、禁同义词（测模型真实能力）
+    Returns:
+        dict：rule_id / category / advice / basis / need_info / escalate /
+              reason / confidence / source / llm_status / follow_up
+    """
+    base = _analyze_v1(question, product_type=product_type, order_info=order_info)
+
+    # 规则层已经有结论（命中规则，或命中转人工关键词，或空输入）→ 直接用
+    rule_missed = base["rule_id"] == "-" and base["escalate"] and base["category"] != "输入为空"
+    if not rule_missed:
+        source = "规则关键词" if base["rule_id"] != "-" else "—"
+        return _decorate(base, source, "skipped")
+
+    # ---------------- 第 2 层：模型意图分类 ----------------
+    llm_status = "disabled" if mode == "rules" else "skipped"
+    if mode in ("auto", "llm"):
+        attempt = _llm_attempt(question, product_type, order_info)
+        llm_status = attempt["status"]
+        data = attempt["data"]
+        if llm_status == "ok" and data:
+            if data["escalate"]:
+                result = dict(ESCALATE_RESULT)
+                result["reason"] = "模型判定需人工：" + (data["reason"] or "涉及争议或授权")
+                return _decorate(result, "模型", llm_status,
+                                 ["涉及赔付 / 投诉的问题不要自行回复，先转主管。"])
+            rule = _rule_by_id(data["rule_id"])
+            if rule is not None:
+                need_info = list(rule["need_info"])
+                for item in data["missing"]:
+                    if item not in need_info:
+                        need_info.append(item)
+                confidence = "高" if data["confidence"] >= 0.7 else "中"
+                reason = "模型分类（{0:.2f}）：{1}".format(
+                    data["confidence"], data["reason"] or rule["category"]
+                )
+                return _decorate(
+                    _result_from_rule(rule, reason, confidence, need_info),
+                    "模型", llm_status,
+                )
+            # 模型也给了 UNKNOWN → 继续往下走
+            llm_status = "error"
+
+    # ---------------- 第 3 层：同义词兜底（只在默认 auto 模式下启用） ----------------
+    if mode == "auto":
+        hit = _synonym_match(_all_text(question, product_type, order_info))
+        if hit:
+            rule = _rule_by_id(hit[0])
+            reason = "同义词兜底命中「{0}」→ {1}".format(hit[1], hit[0])
+            return _decorate(_result_from_rule(rule, reason, "中"), "同义词", llm_status)
+
+    # ---------------- 第 4 层：转人工，并给一句澄清话术 ----------------
+    reason_map = {
+        "unavailable": "未配置 DeepSeek 密钥",
+        "error": "模型调用失败或无法判定",
+        "skipped": "未调用模型",
+        "disabled": "已关闭模型",
+    }
+    result = dict(base)
+    result["reason"] = base["reason"] + "（" + reason_map.get(llm_status, llm_status) + "）"
+    return _decorate(result, "—", llm_status, [FOLLOW_UP_QUESTION])

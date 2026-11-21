@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AI 售后工单辅助台 V1：规则版页面（暂未接入大模型）。
+"""AI 售后工单辅助台 V2：规则 + 模型 + 同义词，三层识别。
 
 运行方式：
     1) 双击 run.bat
@@ -11,14 +11,45 @@ from engine import RULES, analyze
 
 st.set_page_config(page_title="AI 售后工单辅助台", page_icon="🎫", layout="centered")
 
-st.title("AI 售后工单辅助台 · V1")
-st.caption("规则版演示：不调用模型，只做规则匹配与边界判断，用于验证「AI 该答什么、不该答什么」。")
+st.title("AI 售后工单辅助台 · V2")
+st.caption(
+    "三层识别：关键词规则 → 大模型意图分类 → 同义词兜底 → 转人工。"
+    "模型只负责「客户在说什么」，答复依据仍由规则库给出，避免模型编造规则。"
+)
+
+# ---------------- 侧边栏：识别模式 ----------------
+with st.sidebar:
+    st.subheader("识别模式")
+    mode_label = st.radio(
+        "选择用哪一层",
+        [
+            "auto（默认：规则 → 模型 → 同义词）",
+            "rules（只跑关键词，V1 对照）",
+            "llm（规则 + 模型，禁同义词）",
+        ],
+        index=0,
+    )
+    mode = mode_label.split("（")[0]
+    st.caption(
+        "对照实验用：同一句话在 rules 下会被判「转人工」，在 auto 下可能被模型或同义词认出。"
+    )
+    st.divider()
+    st.markdown("**模型层状态**")
+    try:
+        import llm_classifier
+
+        if llm_classifier.available():
+            st.success("已就绪（读到密钥）")
+        else:
+            st.warning("未配置密钥：模型层会自动跳过，改用同义词兜底")
+    except Exception:
+        st.warning("分类层导入失败：模型层不可用，改用同义词兜底")
 
 # ---------------- 一、客户问题 ----------------
 st.subheader("一、客户问题")
 customer_message = st.text_area(
     "客户原始消息 / 对话记录（必填）",
-    placeholder="例如：我买的东西还没发货，想退款",
+    placeholder="例如：东西不满意，能退钱吗",
     height=120,
 )
 
@@ -50,14 +81,19 @@ if run:
     if not customer_message.strip():
         st.warning("请先填写客户原始消息。")
     else:
-        result = analyze(customer_message, product_type=product_type, order_info=order_info)
+        result = analyze(
+            customer_message,
+            product_type=product_type,
+            order_info=order_info,
+            mode=mode,
+        )
 
         if result["escalate"]:
             st.error("**需要转人工** —— 这条不能让 AI 自己回。")
         else:
             st.success("**可以给出答复建议**（仍需客服确认后再发送）")
 
-        left, right, third = st.columns(3)
+        left, right, third, fourth = st.columns(4)
         with left:
             st.markdown("**问题分类**")
             st.write(result["category"])
@@ -65,6 +101,9 @@ if run:
             st.markdown("**命中规则**")
             st.write(result["rule_id"])
         with third:
+            st.markdown("**判定来源**")
+            st.write(result["source"])
+        with fourth:
             st.markdown("**置信度**")
             st.write(result["confidence"])
 
@@ -83,12 +122,18 @@ if run:
             for item in result["need_info"]:
                 st.markdown("- " + item)
 
+        if result["follow_up"]:
+            st.markdown("**可先发给客户的澄清话术**")
+            st.code(result["follow_up"][0], language=None)
+
         with st.expander("为什么不是「什么都答」（产品边界说明）"):
             st.markdown(
                 "本版把输出分成三类：\n"
                 "1. **规则明确 + 信息齐全** → 给答复建议与规则依据；\n"
                 "2. **关键信息缺失** → 提示补充，不硬答；\n"
-                "3. **赔付 / 投诉 / 例外承诺 / 规则未覆盖** → 转人工，AI 不独立担责。"
+                "3. **赔付 / 投诉 / 例外承诺 / 规则未覆盖** → 转人工，AI 不独立担责。\n\n"
+                "模型只做分类，不写答复；模型调用失败时回落到规则与同义词，"
+                "不会因为模型出错就给出没依据的答复。"
             )
 
 st.divider()
