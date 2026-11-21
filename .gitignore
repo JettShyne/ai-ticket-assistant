@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .idea/
 .DS_Store
+
+# 终端捕获的临时输出
+tests/live_*.txt
