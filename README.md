@@ -72,12 +72,32 @@ python main.py --brief "东西坏了"                # 简版输出
 python main.py --rules "东西不满意，能退钱吗"     # 只跑关键词，看 V1 原样
 ```
 
-**配模型密钥（可选，不配也能用，只是跳过模型层）**：
+**配模型密钥（可选，不配也能用，只是跳过模型层）**：三种方式挑一个。
 
-1. 在项目目录跑 `python main.py --open-env`（没有 `.env` 会自动复制一份并打开）
+方式 A · 只在当前终端（不建文件，关掉窗口就没了）：
+
+```powershell
+Set-PSReadLineOption -HistorySaveStyle SaveNothing   # 本窗口不写命令历史，密钥不落盘
+$env:DEEPSEEK_API_KEY = "sk-你的真实密钥"
+python main.py --check
+```
+
+> 只对这一个终端窗口有效。新开终端、重启 PyCharm、双击 `run.bat` 都读不到，工具会自动跳过模型层（不会报错）。
+
+方式 B · 一次性永久（写进用户环境变量，双击 `run.bat` 也能用）：
+
+```powershell
+Set-PSReadLineOption -HistorySaveStyle SaveNothing
+setx DEEPSEEK_API_KEY "sk-你的真实密钥"
+```
+
+> `setx` 对**当前**窗口不生效，要新开一个终端再跑 `python main.py --check`。撤销：`setx DEEPSEEK_API_KEY ""`。
+
+方式 C · `.env` 文件（换电脑、给别人演示最省心）：
+
+1. 跑 `python main.py --open-env`（没有 `.env` 会自动从 `.env.example` 复制一份并打开）
 2. 把密钥贴在 `DEEPSEEK_API_KEY=` 的等号后面，不加引号、不留空格
-3. 按 Ctrl+S 保存，关掉记事本
-4. 跑 `python main.py --check`，三步全 `[OK]` 就成了
+3. `Ctrl + S` 保存，再跑 `python main.py --check`
 
 `.env` 已被 `.gitignore` 排除，不会被推上 GitHub。
 
