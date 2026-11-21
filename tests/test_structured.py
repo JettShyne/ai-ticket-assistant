@@ -225,6 +225,20 @@ def fake_client_checks():
         results.append(check("模型抽取的事实被标为待核实", "模型抽取 · 待核实" in sources, str(sources)))
         results.append(check("模型抽取的缺口被并入可选补充", "签收时间" in report["gaps"]["optional"]))
 
+        # 复述原话的抽取项应该被丢掉，否则「已知事实」里全是废话
+        install('{"demand": "退款", "facts": [{"content": "收到的杯子碎了", "source": "客户陈述"}], "gaps": []}')
+        report = build_report("收到的杯子碎了，拍了照片", "日用品", "")
+        sources = [f["source"] for f in report["known_facts"]]
+        results.append(check("复述原话的抽取项被丢掉", "模型抽取 · 待核实" not in sources, str(sources)))
+
+        # 缺口与「未提供：商品类型」重复的，不再列第二遍
+        install('{"demand": "退款", "facts": [], "gaps": ["商品类型", "订单信息"]}')
+        report = build_report("东西坏了", "未知", "")
+        optional = report["gaps"]["optional"]
+        results.append(check("与「未提供」重复的缺口被去重",
+                             "商品类型" not in optional and "订单信息" not in optional,
+                             "、".join(optional)))
+
         install("这不是 JSON，我直接给个结论：赔 50 元。")
         report = build_report("收到的杯子碎了", "日用品", "")
         sources = [f["source"] for f in report["known_facts"]]

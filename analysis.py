@@ -59,6 +59,29 @@ CONFLICT_RULES = [
 # 缺信息时判断「必须 vs 可选」的关键词：涉及订单、时间、凭证的算必须
 MUST_VERIFY_HINTS = ["单号", "时间", "状态", "凭证", "照片", "截图", "是否", "金额", "抬头"]
 
+# 去重时忽略这三种后缀：「订单信息 / 订单情况 / 订单状态」在这个语境下是一回事
+_NORMALIZE_SUFFIXES = ("信息", "情况", "状态", "内容")
+
+
+def _normalize(text):
+    """把「订单信息 / 订单情况 / 订单状态」压成同一个词，便于比较重复。"""
+    text = (text or "").strip()
+    for suffix in _NORMALIZE_SUFFIXES:
+        text = text.replace(suffix, "")
+    return text.strip()
+
+
+def _is_duplicate(text, candidates):
+    """判断一段文字是否和已有内容重复（互相包含即算重复）。"""
+    a = _normalize(text)
+    if not a:
+        return True
+    for cand in candidates:
+        b = _normalize(cand)
+        if b and (a in b or b in a):
+            return True
+    return False
+
 
 def _find_first(text, patterns):
     for label, words in patterns:
@@ -214,24 +237,42 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
     must_gaps, optional_gaps = _information_gaps(rule, order_info)
     conflicts = _conflicts(question, order_info)
 
-    # 模型抽取（可选）：只补「客户说了什么」，不与输入冲突时不覆盖
+    # 模型抽取（可选）：只补「客户说了什么」，与已有内容重复的一律丢掉
     extraction = None
     if use_llm and mode in ("auto", "llm") and (question or "").strip():
         extraction = _try_extract(question, product_type, order_info)
         if extraction:
+            spoken = " ".join(x for x in [question, order_info, product_type] if x)
+            existing_facts = [f["content"] for f in facts]
+
             for item in extraction.get("facts", [])[:4]:
                 content = str(item.get("content", "")).strip()
-                if content and content not in [f["content"] for f in facts]:
-                    facts.append({
-                        "content": content,
-                        "source": "模型抽取 · 待核实",
-                        "verified": False,
-                        "note": "模型从对话中抽取，不是事实认定",
-                    })
+                if not content:
+                    continue
+                # 原话已经整段列在第一条事实里，模型再复述一遍没有信息量
+                if content in spoken:
+                    continue
+                if _is_duplicate(content, existing_facts):
+                    continue
+                facts.append({
+                    "content": content,
+                    "source": "模型抽取 · 待核实",
+                    "verified": False,
+                    "note": "模型从对话中抽取，不是事实认定",
+                })
+                existing_facts.append(content)
+
+            # 缺口去重：和「未提供：X」或规则已要求的项重复的，不再列第二遍
+            missing_inputs = [f["content"].replace("未提供：", "")
+                              for f in facts if f["source"] == "缺失"]
+            gap_candidates = list(must_gaps) + list(optional_gaps) + missing_inputs
             for item in extraction.get("gaps", [])[:4]:
                 item = str(item).strip()
-                if item and item not in must_gaps and item not in optional_gaps:
-                    optional_gaps.append(item)
+                if not item or _is_duplicate(item, gap_candidates):
+                    continue
+                optional_gaps.append(item)
+                gap_candidates.append(item)
+
             if extraction.get("demand") and demand == "未明确":
                 demand = str(extraction["demand"]).strip()[:20]
 
