@@ -325,6 +325,14 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
     optional_gaps, dropped_optional = _drop_covered_gaps(optional_gaps, provided)
     covered = dropped_must + dropped_optional
 
+    # 建议文案是规则库原文，不擅自改写；但客户已给证据时，必须提示客服跳过「索要凭证」这一步
+    advice_note = ""
+    if covered:
+        advice_note = (
+            "客户已提供「{0}」：本条建议里「索要凭证」那一步请跳过，先确认已收到，"
+            "再直接进入核实与补发/退款流程。".format("、".join(covered))
+        )
+
     uncertainty = _uncertainty(rule, result, must_gaps, conflicts, demand, covered)
 
     report = {
@@ -349,6 +357,7 @@ def build_report(question, product_type="未知", order_info="", mode="auto", us
             "basis": result["basis"],
             "source": result["source"],
             "confidence": result["confidence"],
+            "note": advice_note,
         },
         "uncertainty": uncertainty,
         "follow_up": list(result.get("follow_up") or []),
@@ -407,6 +416,8 @@ def format_report(report):
 
     lines.append("【五、处理建议与依据】")
     lines.append("  " + report["advice"]["text"])
+    if report["advice"].get("note"):
+        lines.append("  注意：" + report["advice"]["note"])
     if report["advice"]["basis"]:
         lines.append("  依据：" + report["advice"]["basis"])
     else:

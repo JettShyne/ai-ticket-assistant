@@ -138,6 +138,8 @@ if run:
         # 五、处理建议与依据
         st.markdown("### 五、处理建议与依据")
         st.info(advice["text"])
+        if advice.get("note"):
+            st.warning(advice["note"])
         if advice["basis"]:
             st.markdown("**规则依据**")
             st.code(advice["basis"], language=None)

@@ -192,6 +192,9 @@ def extra_checks(reports):
                          "、".join(s7["gaps"].get("covered", []))))
     results.append(check("S7 · 不确定性提醒先确认证据",
                          any("已表示提供" in item for item in s7["uncertainty"])))
+    results.append(check("S7 · 建议里提示跳过索要凭证",
+                         "跳过" in s7["advice"].get("note", ""),
+                         s7["advice"].get("note", "")[:40]))
 
     return results
 
