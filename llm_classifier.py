@@ -191,7 +191,6 @@ def classify(question, rules, product_type="未知", order_info=""):
 
 
 EXTRACT_PROMPT = """你是售后工单的信息抽取器。只抽取，不判断责任，不给处理建议。
-
 任务：从客户原话（可能还有商品类型、订单情况）里抽出三样东西：
 1. 客户到底想要什么（诉求）；
 2. 客户明确说了哪些事实；
@@ -271,3 +270,47 @@ def extract(question, product_type="未知", order_info=""):
         "gaps": gaps,
         "tokens": getattr(usage, "total_tokens", 0) if usage else 0,
     }
+
+
+def _friendly_error(exc):
+    """把常见报错翻译成人话，方便照着改。"""
+    name = type(exc).__name__
+    text = str(exc)
+    lowered = text.lower()
+    if "authentication" in lowered or "401" in lowered or "invalid api key" in lowered:
+        return "密钥无效或写错了（401）：检查是不是复制少了字符，或密钥已被删除"
+    if "402" in lowered or "insufficient" in lowered or "balance" in lowered:
+        return "账户余额不足或没开通（402）：去 DeepSeek 控制台看下余额"
+    if "404" in lowered or "model_not_found" in lowered or "does not exist" in lowered:
+        return "模型名或接口地址不对（404）：检查 .env 里的 DEEPSEEK_MODEL 与 DEEPSEEK_BASE_URL"
+    if "timeout" in lowered or "connection" in lowered or "network" in lowered:
+        return "连不上接口（网络/超时）：检查网络、代理，或换一个接口地址"
+    if "429" in lowered or "rate limit" in lowered:
+        return "请求太频繁被限流（429）：等一分钟再试"
+    return "{0}：{1}".format(name, text[:120])
+
+
+def ping():
+    """发一次极小的请求，验证「密钥能不能真的用起来」。
+
+    Returns:
+        (ok, message)。只花几个 token。
+    """
+    if not api_key():
+        return False, "没有读到密钥"
+    try:
+        resp = _client().chat.completions.create(
+            model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            messages=[{"role": "user", "content": "只回复两个字母：ok"}],
+            temperature=0,
+            max_tokens=5,
+        )
+    except Exception as exc:
+        return False, _friendly_error(exc)
+
+    text = ""
+    if resp.choices:
+        text = (resp.choices[0].message.content or "").strip()[:20]
+    usage = getattr(resp, "usage", None)
+    tokens = getattr(usage, "total_tokens", 0) if usage else 0
+    return True, "模型回了「{0}」，本次消耗 {1} tokens".format(text or "（空）", tokens)

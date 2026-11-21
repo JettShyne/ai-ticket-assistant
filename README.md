@@ -56,16 +56,17 @@
 
 ## 怎么运行
 
-**方式一**：双击 `run.bat`，浏览器自动打开。
+**方式一（最省事）**：直接双击 `run.bat`。它会自动用项目自带的 `.venv`（依赖已装好），浏览器会打开页面。
 
-**方式二（PyCharm）**：
+**方式二（PyCharm）**：File → Open → 选 `D:\AI售后辅助` → 打开，然后在底部 Terminal 执行
 ```
 python -m streamlit run app.py
 ```
 
-**方式三（命令行）**：
+**方式三（命令行，最快）**：
 ```
-python main.py --check                          # 先确认模型层是否就绪（不显示密钥）
+python main.py --check                          # 三步体检：库、密钥、密钥能不能用
+python main.py --open-env                       # 帮你打开 .env 填密钥
 python main.py "我买的东西还没发货，我想退款"     # 结构化报告
 python main.py --brief "东西坏了"                # 简版输出
 python main.py --rules "东西不满意，能退钱吗"     # 只跑关键词，看 V1 原样
@@ -73,9 +74,10 @@ python main.py --rules "东西不满意，能退钱吗"     # 只跑关键词，
 
 **配模型密钥（可选，不配也能用，只是跳过模型层）**：
 
-1. 把 `.env.example` 复制一份，改名成 `.env`（开头有个点）
-2. 用记事本打开，把 `sk-在这里填你自己的密钥` 换成你自己的 DeepSeek 密钥
-3. 保存后跑 `python main.py --check`，出现「模型调用层：可用」即可
+1. 在项目目录跑 `python main.py --open-env`（没有 `.env` 会自动复制一份并打开）
+2. 把密钥贴在 `DEEPSEEK_API_KEY=` 的等号后面，不加引号、不留空格
+3. 按 Ctrl+S 保存，关掉记事本
+4. 跑 `python main.py --check`，三步全 `[OK]` 就成了
 
 `.env` 已被 `.gitignore` 排除，不会被推上 GitHub。
 

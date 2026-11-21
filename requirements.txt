@@ -1,0 +1,4 @@
+# 这个项目跑起来需要的三个包
+streamlit>=1.30
+openai>=1.30
+python-dotenv>=1.0
