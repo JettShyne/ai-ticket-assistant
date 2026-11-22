@@ -37,8 +37,9 @@ def main():
 
     texts = []
     for element in (list(at.markdown) + list(at.success) + list(at.error) + list(at.info)
-                    + list(at.code) + list(at.caption) + list(at.warning)):
-        value = getattr(element, "value", "")
+                    + list(at.code) + list(at.caption) + list(at.warning)
+                    + list(at.header) + list(at.subheader) + list(at.metric)):
+        value = getattr(element, "value", "") or getattr(element, "label", "")
         if value:
             texts.append(str(value))
     blob = " ".join(texts)
@@ -64,8 +65,9 @@ def main():
     at3.button[0].click()
     at3.run()
     texts3 = []
-    for element in list(at3.markdown) + list(at3.success) + list(at3.info) + list(at3.warning):
-        value = getattr(element, "value", "")
+    for element in (list(at3.markdown) + list(at3.success) + list(at3.info) + list(at3.warning)
+                    + list(at3.header) + list(at3.subheader) + list(at3.metric)):
+        value = getattr(element, "value", "") or getattr(element, "label", "")
         if value:
             texts3.append(str(value))
     blob3 = " ".join(texts3)
