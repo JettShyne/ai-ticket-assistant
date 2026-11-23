@@ -32,9 +32,9 @@ with st.sidebar:
         if llm_classifier.available():
             st.success("已就绪（读到密钥）")
         else:
-            st.warning("未配置密钥：自动跳过模型层，改用规则与同义词兜底")
+            st.info("在线演示版未接模型：意图识别走「关键词 + 同义词」，其余功能完全可用")
     except Exception:
-        st.warning("模型层不可用：改用规则与同义词兜底")
+        st.info("在线演示版未接模型：意图识别走「关键词 + 同义词」，其余功能完全可用")
 
 # ================= 输入 =================
 st.header("输入")
